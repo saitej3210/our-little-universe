@@ -1,0 +1,5 @@
+[functions.admin-create-profile]
+verify_jwt = true
+
+[functions.profile-picker]
+verify_jwt = false
