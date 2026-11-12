@@ -279,10 +279,45 @@ function Player({ memory, onClose, onHome }) {
     setMuted(next)
     if (videoRef.current) videoRef.current.muted = next
   }
-  const fullscreen = () => {
-    const target = frameRef.current
-    if (document.fullscreenElement) document.exitFullscreen?.()
-    else target?.requestFullscreen?.()
+  const fullscreen = async () => {
+    const video = videoRef.current
+    const frame = frameRef.current
+    if (!video || !frame) return
+
+    // iPhone/iPad Safari uses the native video fullscreen API; a div's
+    // requestFullscreen() is not supported consistently there.
+    if (video.webkitDisplayingFullscreen) {
+      video.webkitExitFullscreen?.()
+      return
+    }
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      if (document.exitFullscreen) await document.exitFullscreen()
+      else document.webkitExitFullscreen?.()
+      return
+    }
+    if (typeof video.webkitEnterFullscreen === 'function') {
+      video.webkitEnterFullscreen()
+      return
+    }
+
+    // Android Chrome and other modern browsers support the standard API.
+    const request = frame.requestFullscreen || frame.webkitRequestFullscreen || video.requestFullscreen || video.webkitRequestFullscreen
+    if (typeof request === 'function') {
+      try {
+        await request.call(frame.requestFullscreen || frame.webkitRequestFullscreen ? frame : video, { navigationUI: 'hide' })
+      } catch (error) {
+        // Older WebKit implementations may reject the options argument.
+        try {
+          await request.call(frame.requestFullscreen || frame.webkitRequestFullscreen ? frame : video)
+        } catch {
+          if (typeof video.webkitEnterFullscreen === 'function') video.webkitEnterFullscreen()
+          else console.warn('Fullscreen is not supported by this browser.', error)
+        }
+      }
+      return
+    }
+    if (typeof video.webkitEnterFullscreen === 'function') video.webkitEnterFullscreen()
+    else console.warn('Fullscreen is not supported by this browser.')
   }
   return <div className="player-screen" role="dialog" aria-label={`Playing ${memory?.title || 'memory'}`}>
     <div className="player-backdrop" style={{backgroundImage:`linear-gradient(0deg,#050505 0%,#05050566 70%),url(${memory?.background_url || memory?.image})`}}/>
