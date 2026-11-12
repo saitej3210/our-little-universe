@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Play, Info, Search, Bell, ChevronDown, Plus, Heart, Volume2, VolumeX,
   LockKeyhole, ArrowLeft, Film, Image as ImageIcon, Settings, Upload, Users,
@@ -216,13 +216,105 @@ function Details({ memory, onBack, onAdd, saved, onPlay, onRelated, memoryItems 
 }
 
 function Player({ memory, onClose, onHome }) {
-  const [playing,setPlaying] = useState(false)
-  const [muted,setMuted] = useState(true)
-  const [progress,setProgress] = useState(() => Number(localStorage.getItem(`olu-progress-${memory?.id}`) || 18))
-  useEffect(()=>{ localStorage.setItem(`olu-progress-${memory?.id}`, String(progress)) },[progress,memory?.id])
-  return <div className="player-screen"><div className="player-backdrop" style={{backgroundImage:`linear-gradient(0deg,#050505 0%,transparent 55%),url(${memory?.background_url || memory?.image})`}}/><div className="player-top"><div className="player-navigation"><button onClick={onClose}><ArrowLeft/> <span>Back</span></button><button onClick={onHome}><HomeIcon/> <span>Home</span></button></div><div><strong>{memory?.title}</strong><small>OUR LITTLE UNIVERSE ORIGINAL</small></div></div><div className="player-center">{memory?.media_url ? (memory.media_type==='video' ? <video className="real-memory-player" src={memory.media_url} controls autoPlay playsInline/> : memory.media_type==='audio' ? <audio src={memory.media_url} controls autoPlay/> : <img className="real-memory-photo" src={memory.media_url} alt={memory.title}/>) : <><button className="big-play" onClick={()=>setPlaying(!playing)}>{playing?<Pause fill="currentColor"/>:<Play fill="currentColor"/>}</button><span>{playing?'Preview playing':'Your memory film is ready'}</span><small>Sample preview · No media source connected</small></>}</div><div className="player-controls"><label className="player-progress" aria-label="Preview timeline"><span style={{width:`${progress}%`}}/><input aria-label="Seek preview" type="range" min="0" max="100" value={progress} onChange={e=>setProgress(Number(e.target.value))}/></label><div className="player-control-row"><button onClick={()=>setPlaying(!playing)}>{playing?<Pause/>:<Play fill="currentColor"/>}</button><button onClick={()=>setMuted(!muted)}>{muted?<VolumeX/>:<Volume2/>}</button><span className="player-time">{`00:${String(Math.round(progress*2.58)).padStart(2,'0')}`} <i>/ 04:18</i></span><span className="player-spacer"/><button aria-label="Fullscreen" onClick={()=>document.documentElement.requestFullscreen?.()}><Maximize/></button></div></div></div>
+  const videoRef = useRef(null)
+  const frameRef = useRef(null)
+  const [playing, setPlaying] = useState(true)
+  const [muted, setMuted] = useState(true)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [duration, setDuration] = useState(0)
+  const [progress, setProgress] = useState(() => Number(localStorage.getItem(`olu-progress-${memory?.id}`) || 0))
+  const isVideo = memory?.media_type === 'video' && !!memory?.media_url
+  const isAudio = memory?.media_type === 'audio' && !!memory?.media_url
+  const formatTime = value => {
+    if (!Number.isFinite(value) || value < 0) return '0:00'
+    const mins = Math.floor(value / 60)
+    const secs = Math.floor(value % 60)
+    return `${mins}:${String(secs).padStart(2, '0')}`
+  }
+  useEffect(() => {
+    localStorage.setItem(`olu-progress-${memory?.id}`, String(progress))
+  }, [progress, memory?.id])
+  useEffect(() => {
+    if (!isVideo || !videoRef.current) return
+    const video = videoRef.current
+    const onLoaded = () => {
+      setDuration(video.duration || 0)
+      if (progress > 0 && progress < 100 && video.duration) video.currentTime = (progress / 100) * video.duration
+      video.play().then(() => setPlaying(true)).catch(() => setPlaying(false))
+    }
+    const onTime = () => {
+      setCurrentTime(video.currentTime || 0)
+      if (video.duration) setProgress((video.currentTime / video.duration) * 100)
+    }
+    const onPlay = () => setPlaying(true)
+    const onPause = () => setPlaying(false)
+    video.addEventListener('loadedmetadata', onLoaded)
+    video.addEventListener('timeupdate', onTime)
+    video.addEventListener('play', onPlay)
+    video.addEventListener('pause', onPause)
+    return () => {
+      video.removeEventListener('loadedmetadata', onLoaded)
+      video.removeEventListener('timeupdate', onTime)
+      video.removeEventListener('play', onPlay)
+      video.removeEventListener('pause', onPause)
+    }
+  }, [isVideo, memory?.id])
+  const togglePlayback = async () => {
+    if (!videoRef.current) return
+    if (videoRef.current.paused) {
+      try { await videoRef.current.play() } catch { setPlaying(false) }
+    } else videoRef.current.pause()
+  }
+  const skip = seconds => {
+    if (!videoRef.current) return
+    videoRef.current.currentTime = Math.max(0, Math.min(duration || Infinity, videoRef.current.currentTime + seconds))
+  }
+  const seek = value => {
+    const next = Number(value)
+    setProgress(next)
+    if (videoRef.current && duration) videoRef.current.currentTime = (next / 100) * duration
+  }
+  const toggleMute = () => {
+    const next = !muted
+    setMuted(next)
+    if (videoRef.current) videoRef.current.muted = next
+  }
+  const fullscreen = () => {
+    const target = frameRef.current
+    if (document.fullscreenElement) document.exitFullscreen?.()
+    else target?.requestFullscreen?.()
+  }
+  return <div className="player-screen" role="dialog" aria-label={`Playing ${memory?.title || 'memory'}`}>
+    <div className="player-backdrop" style={{backgroundImage:`linear-gradient(0deg,#050505 0%,#05050566 70%),url(${memory?.background_url || memory?.image})`}}/>
+    <header className="player-top">
+      <div className="player-navigation">
+        <button type="button" onClick={onClose}><ArrowLeft/> <span>Back</span></button>
+        <button type="button" onClick={onHome}><HomeIcon/> <span>Home</span></button>
+      </div>
+      <div className="player-title"><strong>{memory?.title}</strong><small>OUR LITTLE UNIVERSE ORIGINAL</small></div>
+    </header>
+    <main className="player-main">
+      <div className={`player-frame ${isVideo ? 'has-video' : ''}`} ref={frameRef}>
+        {isVideo ? <video ref={videoRef} className="real-memory-player" src={memory.media_url} autoPlay muted playsInline preload="metadata" poster={memory.poster_url || memory.image} />
+          : isAudio ? <div className="audio-memory-card"><Music2 size={42}/><strong>{memory.title}</strong><audio src={memory.media_url} controls autoPlay/></div>
+          : memory?.media_url ? <img className="real-memory-photo" src={memory.media_url} alt={memory.title}/>
+          : <div className="player-empty"><Film size={42}/><strong>{memory?.title || 'Your memory film'}</strong><span>No media source is connected to this memory yet.</span></div>}
+      </div>
+      {isVideo && <section className="cinema-controls" aria-label="Video controls">
+        <label className="cinema-progress"><span style={{width:`${progress}%`}}/><input aria-label="Seek video" type="range" min="0" max="100" step="0.1" value={progress} onChange={e=>seek(e.target.value)}/></label>
+        <div className="cinema-control-row">
+          <button type="button" aria-label="Play or pause" onClick={togglePlayback}>{playing?<Pause fill="currentColor"/>:<Play fill="currentColor"/>}</button>
+          <button type="button" aria-label="Back 10 seconds" onClick={()=>skip(-10)}><RotateCcw/><small>10</small></button>
+          <button type="button" aria-label="Forward 10 seconds" onClick={()=>skip(10)}><SkipForward/><small>10</small></button>
+          <button type="button" aria-label={muted?'Unmute':'Mute'} onClick={toggleMute}>{muted?<VolumeX/>:<Volume2/>}</button>
+          <span className="cinema-time">{formatTime(currentTime)} <i>/ {formatTime(duration)}</i></span>
+          <span className="player-spacer"/>
+          <button type="button" aria-label="Fullscreen" onClick={fullscreen}><Maximize/></button>
+        </div>
+      </section>}
+    </main>
+  </div>
 }
-
 
 function SearchOverlay({ onClose, onOpen, memoryItems = memories }) {
   const [query,setQuery] = useState('')
@@ -270,6 +362,13 @@ export default function App() {
   const [favoriteProfileId,setFavoriteProfileId] = useState('you')
   const [searchOpen,setSearchOpen] = useState(false)
   const [playerMemory,setPlayerMemory] = useState(null)
+  useEffect(() => {
+    if (!playerMemory) return
+    window.history.pushState({ ...(window.history.state || {}), oluPlayer: true }, '')
+    const handlePlayerBack = () => setPlayerMemory(null)
+    window.addEventListener('popstate', handlePlayerBack)
+    return () => window.removeEventListener('popstate', handlePlayerBack)
+  }, [!!playerMemory])
   const [activeSection,setActiveSection] = useState('Home')
   const [toast,setToast] = useState('')
   const loadSiteSettings = async (profileId) => {
@@ -350,5 +449,5 @@ export default function App() {
   />
   if (stage === 'profiles') return <Login onEnter={({user,profile:p})=>{setAuthUser(user);setProfile(p);setStage('home')}} onAdmin={user=>{setAuthUser(user);setStage('admin')}} onReplay={()=>setStage('intro')}/>
   if (stage === 'admin') return <AdminDashboard onSignOut={async()=>{ if (supabase) await supabase.auth.signOut(); setAuthUser(null); setProfile(null); setStage('login') }}/>
-  return <>{selected ? <Details memory={selected} onBack={()=>setSelected(null)} onAdd={toggleFavorite} saved={favorites.includes(selected.id)} onPlay={setPlayerMemory} onRelated={setSelected} memoryItems={memoryItems}/> : <Home profile={profile} siteSettings={siteSettings} profileCategories={profileCategories} onProfile={async()=>{await supabase?.auth.signOut();setProfile(null);setStage('login')}} onAdmin={()=>setStage('login')} onOpen={setSelected} favorites={favorites} onAdd={toggleFavorite} onSearch={()=>setSearchOpen(true)} onReplay={()=>setStage('intro')} onNavigate={navigate} activeSection={activeSection} onToast={setToast} memoryItems={memoryItems}/>} {searchOpen && <SearchOverlay memoryItems={memoryItems} onClose={()=>setSearchOpen(false)} onOpen={m=>{setSelected(m);setSearchOpen(false)}}/>}{playerMemory && <Player memory={playerMemory} onClose={()=>setPlayerMemory(null)} onHome={()=>{setPlayerMemory(null);setSelected(null);setSearchOpen(false);window.scrollTo({top:0,behavior:"smooth"})}}/>} {toast && <div className="olu-toast"><Check size={16}/>{toast}</div>}</>
+  return <>{selected ? <Details memory={selected} onBack={()=>setSelected(null)} onAdd={toggleFavorite} saved={favorites.includes(selected.id)} onPlay={setPlayerMemory} onRelated={setSelected} memoryItems={memoryItems}/> : <Home profile={profile} siteSettings={siteSettings} profileCategories={profileCategories} onProfile={async()=>{await supabase?.auth.signOut();setProfile(null);setStage('login')}} onAdmin={()=>setStage('login')} onOpen={setSelected} favorites={favorites} onAdd={toggleFavorite} onSearch={()=>setSearchOpen(true)} onReplay={()=>setStage('intro')} onNavigate={navigate} activeSection={activeSection} onToast={setToast} memoryItems={memoryItems}/>} {searchOpen && <SearchOverlay memoryItems={memoryItems} onClose={()=>setSearchOpen(false)} onOpen={m=>{setSelected(m);setSearchOpen(false)}}/>}{playerMemory && <Player memory={playerMemory} onClose={()=>{setPlayerMemory(null);if(window.history.state?.oluPlayer)window.history.back()}} onHome={()=>{setPlayerMemory(null);if(window.history.state?.oluPlayer)window.history.back();setSelected(null);setSearchOpen(false);window.scrollTo({top:0,behavior:"smooth"})}}/>} {toast && <div className="olu-toast"><Check size={16}/>{toast}</div>}</>
 }
